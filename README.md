@@ -37,7 +37,7 @@ Windows 桌面                                 Linux 推理机
 
 ## 安装（Windows 一键）
 
-1. 到 Releases 页下载 `llama-panel-setup-1.0.0.exe`（约 53 MB）；
+1. 到 [Releases](https://github.com/lmq9622/llama-panel/releases/latest) 下载 `llama-panel-setup-1.0.0.exe`（约 53 MB）；
 2. 双击运行，向导里填：
 
 | 字段 | 说明 |
