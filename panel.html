@@ -70,8 +70,8 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 .live-zoom{margin-left:auto;font-size:.72rem;color:var(--text-muted);white-space:nowrap}
 .live-tags{display:flex;gap:6px;flex-wrap:wrap}
 .tag{font-size:.72rem;font-weight:600;padding:3px 10px;border-radius:999px;background:rgba(5,150,105,.1);color:#047857;border:1px solid rgba(5,150,105,.2)}
-.live-body{display:grid;grid-template-columns:300px 1fr;gap:14px;min-height:230px}
-.live-left{display:flex;flex-direction:column;gap:7px;min-width:0}
+.live-body{display:grid;grid-template-columns:300px 1fr;grid-template-rows:minmax(0,1fr);gap:14px;height:clamp(300px,34vh,360px)}
+.live-left{display:flex;flex-direction:column;gap:7px;min-width:0;overflow-y:auto}
 .ll-row{display:flex;justify-content:space-between;align-items:baseline;font-size:.82rem;gap:8px}
 .ll-row span{color:var(--text-tertiary);flex-shrink:0}
 .ll-row b{font-family:var(--mono);font-weight:700;font-size:.84rem;text-align:right;word-break:break-all}
@@ -85,7 +85,7 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 .tl{white-space:pre-wrap;word-break:break-word}
 .tl.dim{color:#6b7280}
 .live-right{display:flex;flex-direction:column;gap:7px;min-width:0}
-.live-right .term{flex:1;max-height:none;min-height:0}
+.live-right .term{flex:1;max-height:none;min-height:0;overflow-y:auto}
 .term-tabs{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .ttab{border:1px solid rgba(0,0,0,.08);background:rgba(255,255,255,.5);color:var(--text-tertiary);font-size:.73rem;font-weight:600;padding:5px 12px;border-radius:999px;transition:all .2s}
 .ttab:hover{background:rgba(255,255,255,.85)}
@@ -101,6 +101,9 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 .tl.out{color:#e6edf3}
 .tl.think{color:#7c8794}
 .tl.end{color:#5b6472;border-top:1px dashed rgba(255,255,255,.12);padding-top:4px;margin:5px 0 2px}
+.tl.fold{color:#8b98a8;background:rgba(255,255,255,.05);border-radius:8px;padding:3px 8px;margin-bottom:5px;font-size:.7rem}
+.tl .tw.live::after{content:"▍";color:#34d399;margin-left:2px;animation:blink 1s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 .tl .pfx{font-weight:700;margin-right:5px}
 .tl.out .pfx{color:#34d399}
 .tl.think .pfx{color:#8b98a8}
@@ -150,7 +153,9 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 }
 @media (max-width:1000px){
   .kpi-row{grid-template-columns:repeat(2,1fr)}
-  .live-body{grid-template-columns:1fr}
+  .live-body{grid-template-columns:1fr;grid-template-rows:auto;height:auto}
+  .live-left{overflow-y:visible}
+  .live-right .term{max-height:300px}
   .wrap{padding:12px}
 }
 @media (max-width:820px){
@@ -369,6 +374,60 @@ function renderLive(slot,fr){
 }
 
 let termTab="chat", traceSince=null, traceBlocks=[], traceLog=[];
+/* 主面板（没放大）的实况框高度固定，只渲染最近若干段，早的自动折叠掉；
+   放大页 #bigTerm 仍然渲染完整历史。 */
+const INLINE_BLOCKS=14, INLINE_LOG_LINES=120;
+
+/* 打字机动画：模型是一段一段吐出来的，整段替换会「一串一串蹦」，
+   所以只让正在流式输出的最后一段逐字推进，历史内容立即全显。 */
+let typedSeq=-1, typedShown=0, typedRaf=0, typedStamp=0, traceBooted=false;
+
+/* 末尾正在流式输出的那一段；遇到 in 说明已经开了新一轮，就不再补旧的 */
+function tailStreamBlock(){
+  for(let i=traceBlocks.length-1;i>=0;i--){
+    const k=traceBlocks[i].kind;
+    if(k==="out"||k==="think") return traceBlocks[i];
+    if(k==="in") return null;
+  }
+  return null;
+}
+
+/* 贴着底部时才自动跟随，用户往上翻历史时不被拽回来 */
+function keepTail(){
+  ["#liveTerm","#bigTerm"].forEach(sel=>{
+    const el=$(sel);
+    if(el&&el.scrollTop+el.clientHeight>=el.scrollHeight-40) el.scrollTop=el.scrollHeight;
+  });
+}
+
+function typedText(b){
+  if(b.seq!==typedSeq) return b.text;
+  return b.text.slice(0,Math.min(typedShown,b.text.length));
+}
+
+function typeTick(){
+  typedRaf=0;
+  const b=tailStreamBlock();
+  if(!b){typedSeq=-1;return;}
+  if(typedSeq!==b.seq){typedSeq=b.seq;typedShown=0;}
+  const total=b.text.length;
+  if(typedShown>=total) return;
+  const now=performance.now();
+  if(now-typedStamp<33){typedRaf=requestAnimationFrame(typeTick);return;}
+  typedStamp=now;
+  /* 落后越多推进越快，追上之后就慢下来，观感接近真实流式 */
+  typedShown=Math.min(total,typedShown+Math.max(1,Math.ceil((total-typedShown)*0.14)));
+  document.querySelectorAll('.tw[data-seq="'+b.seq+'"]').forEach(el=>{
+    el.textContent=b.text.slice(0,typedShown);
+    el.classList.toggle("live",typedShown<total);
+  });
+  keepTail();
+  if(typedShown<total) typedRaf=requestAnimationFrame(typeTick);
+}
+
+function kickTyping(){
+  if(!typedRaf) typedRaf=requestAnimationFrame(typeTick);
+}
 
 function termHtml(lines){
   return lines.length?lines.map(l=>'<div class="tl">'+esc(l)+"</div>").join(""):'<div class="tl dim">等待日志流…</div>';
@@ -388,6 +447,7 @@ function paramLine(p){
 /* 把 proxy 采到的原始事件合并成「块」：同一轮连续输出的增量并成一条，
    面板读起来才像流式终端，而不是一行一个 token。 */
 function ingestTrace(evs){
+  let blockSeq=traceBlocks.length?traceBlocks[traceBlocks.length-1].seq:0;
   for(const e of (evs||[])){
     if(!e||typeof e!=="object") continue;
     const id=e.id==null?0:e.id;
@@ -397,15 +457,19 @@ function ingestTrace(evs){
       if(last.text.length>9000) last.text=last.text.slice(-9000);
       last.t=e.t||last.t;
     }else{
-      traceBlocks.push({kind:e.k||"",id:id,t:e.t||"",text:e.x||"",e:e});
+      traceBlocks.push({seq:++blockSeq,kind:e.k||"",id:id,t:e.t||"",text:e.x||"",e:e});
     }
   }
   if(traceBlocks.length>500) traceBlocks=traceBlocks.slice(-500);
 }
 
-function traceHtml(){
+function traceHtml(limit){
   if(!traceBlocks.length) return '<div class="tl dim">等待对话… 请求发到 8080 / 8081 后，这里会实时滚动「喂给模型的输入」和「模型的流式输出」。</div>';
-  return traceBlocks.map(b=>{
+  const total=traceBlocks.length;
+  const folded=(limit&&total>limit)?total-limit:0;
+  const show=folded?traceBlocks.slice(folded):traceBlocks;
+  const head=folded?('<div class="tl fold">▲ 已自动折叠前面 '+folded+' 段，单击本卡片放大看完整对话</div>'):"";
+  return head+show.map(b=>{
     if(b.kind==="in"){
       const e=b.e||{}, msgs=e.msgs||[];
       let h='<div class="tl ih">▸ 第 '+b.id+' 轮输入 · '+esc(b.t)+' · '+esc(e.model||"")+(e.stream?" · 流式":" · 非流式")
@@ -418,8 +482,8 @@ function traceHtml(){
       if(pl) h+='<div class="tl ip">参数 '+esc(pl)+'</div>';
       return h;
     }
-    if(b.kind==="think") return '<div class="tl think"><span class="pfx">▹ 思考</span>'+esc(b.text)+'</div>';
-    if(b.kind==="out") return '<div class="tl out"><span class="pfx">▸ 输出</span>'+esc(b.text)+'</div>';
+    if(b.kind==="think") return '<div class="tl think"><span class="pfx">▹ 思考</span><span class="tw'+(b.seq===typedSeq&&typedShown<b.text.length?" live":"")+'" data-seq="'+b.seq+'">'+esc(typedText(b))+'</span></div>';
+    if(b.kind==="out") return '<div class="tl out"><span class="pfx">▸ 输出</span><span class="tw'+(b.seq===typedSeq&&typedShown<b.text.length?" live":"")+'" data-seq="'+b.seq+'">'+esc(typedText(b))+'</span></div>';
     if(b.kind==="end"){
       const e=b.e||{};
       let s='— 第 '+b.id+' 轮结束 · '+esc(b.t)+(e.why?(" · "+esc(e.why)):"");
@@ -431,14 +495,18 @@ function traceHtml(){
 }
 
 function renderTermArea(){
-  const html=termTab==="chat"?traceHtml():termHtml(traceLog);
-  ["#liveTerm","#bigTerm"].forEach(sel=>{
+  const full=termTab==="chat"?traceHtml():termHtml(traceLog);
+  const brief=termTab==="chat"?traceHtml(INLINE_BLOCKS):termHtml(traceLog.slice(-INLINE_LOG_LINES));
+  /* 只在用户本来就贴着底部时才自动跟到底，翻看历史时不会被拽走 */
+  const paint=(sel,html)=>{
     const el=$(sel);
     if(!el) return;
     const near=el.scrollTop+el.clientHeight>=el.scrollHeight-40;
     el.innerHTML=html;
     if(near) el.scrollTop=el.scrollHeight;
-  });
+  };
+  paint("#liveTerm",brief);
+  paint("#bigTerm",full);
   document.querySelectorAll(".ttab").forEach(b=>b.classList.toggle("on",b.dataset.tab===termTab));
 }
 
@@ -592,7 +660,16 @@ async function tick(){
       if(traceSince!=null&&d.trace_seq<traceSince) traceBlocks=[];
       traceSince=d.trace_seq;
     }
+    const boot=!traceBooted;
     ingestTrace(d.trace);
+    if(boot){
+      /* 首次加载：已有历史直接全显，只有之后的增量才走打字机 */
+      traceBooted=true;
+      const b=tailStreamBlock();
+      if(b){typedSeq=b.seq;typedShown=b.text.length;}
+    }else{
+      kickTyping();
+    }
     render(d);
   }catch(e){setFeed("offline");}
 }

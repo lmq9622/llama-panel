@@ -12,7 +12,7 @@
 
 #define MyAppName "本地大模型监控面板"
 #define MyAppShort "llama-panel"
-#define MyVersion "1.0.1"
+#define MyVersion "1.0.0"
 #define MyPublisher "lmq9622"
 
 [Setup]
