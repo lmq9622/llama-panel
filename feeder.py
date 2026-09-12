@@ -270,19 +270,18 @@ class Feeder(object):
         （driver/library version mismatch），所以家目录下可能放了一份对齐的库。
         但那份库只有和当前内核模块版本一致时才有用：版本对不上时它会直接报错，
         如果还把它排在前面、又只看 stdout 非空，就会把本来能用的干净环境带坏。
-        所以这里只挑版本号对得上的目录。
+
+        这里**只用版本号完全一致的目录**：版本对不上的 libnvidia-ml 会让内核模块
+        报 "NVRM: API mismatch"，反复调用会把内核打挂（2026-09-12 两次掉线就是这么来的）。
         """
         envs = [None]
-        home = os.path.expanduser("~")
         ver = self._driver_version()
-        cands = [os.path.join(home, "nvml-" + ver)] if ver else []
-        for d in sorted(glob.glob(os.path.join(home, "nvml-*")), reverse=True):
-            if d not in cands:
-                cands.append(d)
-        for d in cands:
-            if os.path.isdir(d):
-                lp = d + ((":" + os.environ["LD_LIBRARY_PATH"]) if os.environ.get("LD_LIBRARY_PATH") else "")
-                envs.append(dict(os.environ, LD_LIBRARY_PATH=lp))
+        if not ver:
+            return envs
+        d = os.path.join(os.path.expanduser("~"), "nvml-" + ver)
+        if os.path.isdir(d):
+            lp = d + ((":" + os.environ["LD_LIBRARY_PATH"]) if os.environ.get("LD_LIBRARY_PATH") else "")
+            envs.append(dict(os.environ, LD_LIBRARY_PATH=lp))
         return envs
 
     def read_gpus(self):
