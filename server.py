@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 APP_NAME = "Llama 监控面板"
+# 对话流序号回退多少才认定是代理重启（而不是重复投递的老事件）
+TRACE_RESET_GAP = 50
 DEFAULT_HOST = "lmq@192.168.2.6"
 DEFAULT_REMOTE = "/home/lmq/llama-panel-feeder.py"
 LLAMA_LABELS = {"BUSY": "推理进行中", "READY": "就绪", "LOADING": "加载模型中", "IDLE": "空闲", "DOWN": "服务离线"}
@@ -304,7 +306,14 @@ class Feed(object):
                     except Exception:
                         continue
                     if seq <= self.trace_seq:
-                        continue
+                        # 代理重启（机器重启、代理重拉）后 n 会从 1 重新开始，而这里的
+                        # 水位只增不减，不识别这次回退就会把重启后的新事件全部丢掉，
+                        # 表现就是对话流冻死在重启前那一屏、再也不更新。
+                        # 退回幅度很大才当成重启，避免把重复投递的老事件误判成新一轮。
+                        if self.trace_seq - seq < TRACE_RESET_GAP:
+                            continue
+                        self.trace.clear()
+                        self.trace_seq = -1
                     self.trace_seq = seq
                     self.trace.append(ev)
                 self.frame = obj

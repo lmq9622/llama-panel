@@ -98,8 +98,38 @@ TRACE_TOTAL_LIMIT = 12000              # 整段 prompt 最多留多少字符
 TRACE_FLUSH_CHARS = 256                # 攒够这么多字符就落盘
 TRACE_FLUSH_SEC = 0.4                  # 或者攒够这么久就落盘
 
+def _seed_trace_state():
+    """重启后序号接着文件里的最大值往下走，不要从 1 重新开始。
+
+    面板是按 n 递增做增量的，如果代理重启后 n 归零，面板的水位比新事件还大，
+    新事件会被整段丢掉，对话流就冻死在重启前那一屏。
+    """
+    try:
+        with open(TRACE_PATH, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 262144))
+            tail = f.read().decode("utf-8", "replace").splitlines()
+        for ln in reversed(tail):
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                obj = json.loads(ln)
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            n, i = obj.get("n"), obj.get("id")
+            if isinstance(n, int) and isinstance(i, int) and n > 0:
+                return {"seq": n, "req": i}
+    except Exception:
+        pass
+    return {"seq": 0, "req": 0}
+
+
 _trace_lock = threading.RLock()
-_trace_state = {"seq": 0, "req": 0}
+_trace_state = _seed_trace_state()
 
 
 def _clip(text, limit):
@@ -420,6 +450,15 @@ def wait_for_backend(timeout=600):
 
 def start_backend():
     """首次推理请求时启动 llama-server（线程安全，等待就绪）。"""
+    # 后端可能本来就活着（比如只是代理进程重启），这种情况直接复用，
+    # 否则会再拉一个 llama-server 去抢 18081 端口。
+    if backend_ready():
+        with _lock:
+            _state["started"] = True
+            _state["ready"] = True
+            if not _state["ready_since"]:
+                _state["ready_since"] = time.time()
+        return True
     with _lock:
         if _state["ready"]:
             if backend_ready():
@@ -449,6 +488,27 @@ def start_backend():
             _state["ready_since"] = time.time()
     _log(f"backend ready={ok} err={_state['error']!r}")
     return ok
+
+
+def start_preload():
+    """开机自启动时把模型提前加载好，不用等第一个请求。
+
+    默认开启（想回到「懒加载」就设 LLAMA_PRELOAD=0）。加载在后台线程里做，
+    不挡端口监听，加载期间 /health 会如实返回 loading=true。
+    """
+    if os.environ.get("LLAMA_PRELOAD", "1") == "0":
+        _log("preload: 已关闭（LLAMA_PRELOAD=0），模型等第一个请求再加载")
+        return
+
+    def run():
+        try:
+            _log("preload: 开机预加载模型…")
+            ok = start_backend()
+            _log(f"preload: 预加载结束 ready={ok}")
+        except Exception as e:
+            _log(f"preload failed: {e}")
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def read_http_request(sock):
@@ -932,5 +992,6 @@ if __name__ == "__main__":
     threads = [threading.Thread(target=serve, args=(p,), daemon=True) for p in PORTS_EXT]
     for t in threads:
         t.start()
+    start_preload()
     for t in threads:
         t.join()
