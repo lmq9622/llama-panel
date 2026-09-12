@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller 构建产物（安装包走 GitHub Release，不进仓库）
+build/
+dist/
+
+# 运行期数据
+panel-data/
+*.log
+
+# 安装向导回归测试临时文件
+installer/_test*
