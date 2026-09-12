@@ -332,6 +332,33 @@ class Feed(object):
         return "online" if (time.time() - self.last_frame_at) < 10 else "stale"
 
 
+    def watch(self):
+        """断线自动重连。
+
+        远端机器重启、网线松动、SSH 掉线都会让采集进程退出；以前没有任何重连逻辑，
+        面板就会一直停在「数据源离线」，非得手动重开面板才行。
+        这里每几秒看一眼采集进程，没了就重新 deploy + spawn，失败就退避重试。
+        """
+        backoff = 5
+        while True:
+            time.sleep(backoff)
+            try:
+                with self.mu:
+                    p = self.proc
+                if p is not None and p.poll() is None:
+                    backoff = 5
+                    continue
+                try:
+                    self.panel.push_event("system", "数据源断开，正在重连 %s …" % self.settings.v["host"])
+                except Exception:
+                    pass
+                self.deploy()
+                self.spawn()
+                backoff = 5
+            except Exception:
+                backoff = min(backoff * 2, 60)
+
+
 class Panel(object):
     def __init__(self, settings):
         self.settings = settings
@@ -544,6 +571,7 @@ def main():
         panel.feed.spawn()
     except Exception:
         pass
+    threading.Thread(target=panel.feed.watch, daemon=True).start()
 
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     httpd.panel = panel
