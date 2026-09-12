@@ -53,7 +53,7 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 .btn.danger{background:rgba(220,38,38,.08);color:#dc2626;border-color:rgba(220,38,38,.25)}
 .spacer{flex:1}
 .main{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:13px;padding:2px 2px 10px;min-height:0}
-.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:13px}
 .kpi{padding:15px 18px;display:flex;flex-direction:column;gap:5px;justify-content:center;min-height:104px}
 .k-label{font-size:.78rem;font-weight:600;color:var(--text-tertiary);letter-spacing:.3px}
 .k-val{font-size:1.7rem;font-weight:800;letter-spacing:-.5px;font-variant-numeric:tabular-nums;line-height:1.15}
@@ -148,6 +148,7 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 .big-term{flex:1;background:rgba(20,22,28,.95);border-radius:var(--radius-md);padding:14px 16px;overflow-y:auto;font-family:var(--mono);font-size:.8rem;line-height:1.7;color:#c9d1d9;margin-top:4px}
 .foot{text-align:center;font-size:.72rem;color:var(--text-muted);padding:2px 0 6px;flex-shrink:0}
 @media (max-width:1180px){
+  .kpi-row{grid-template-columns:repeat(3,1fr)}
   .hw-row{grid-template-columns:1fr 1fr}
   .hw-row>.hw:last-child{grid-column:1/-1}
 }
@@ -186,6 +187,11 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
     <div class="k-label">总 Token 使用量</div>
     <div class="k-val" id="kTotal">0</div>
     <div class="k-sub" id="kTotalSub">输入 0 · 输出 0</div>
+  </div>
+  <div class="glass kpi">
+    <div class="k-label">缓存综合命中率</div>
+    <div class="k-val" id="kHit">--</div>
+    <div class="k-sub" id="kHitSub">命中 0 / 输入 0</div>
   </div>
   <div class="glass kpi">
     <div class="k-label">已为您节省</div>
@@ -331,6 +337,10 @@ function render(d){
   const t=d.totals||{};
   $("#kTotal").textContent=fnum(t.all_tokens);
   $("#kTotalSub").textContent="输入 "+fnum(t.all_in)+" · 输出 "+fnum(t.all_out);
+  /* 缓存综合命中率 = 缓存命中 / 全部输入（命中 + 新算），按 token 加权而不是按任务数平均 */
+  const allIn=t.all_in||0;
+  $("#kHit").textContent=allIn?((t.cache_hit||0)/allIn*100).toFixed(1)+"%":"--";
+  $("#kHitSub").textContent="命中 "+fnum(t.cache_hit)+" / 输入 "+fnum(allIn);
   $("#kSaved").textContent="¥ "+(t.saved==null?0:t.saved).toFixed(2);
   const p=d.prices||{};
   $("#kSavedSub").textContent="命中 "+p.cache_hit_price+" / 未命中 "+p.input_miss_price+" / 输出 "+p.output_price+" 元/百万tokens";

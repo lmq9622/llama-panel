@@ -252,32 +252,62 @@ class Feeder(object):
                             "dur": round(time.time() - rec.get("t0", time.time()), 1)}
         self.hist.append(self.tasks[task])
 
+    def _driver_version(self):
+        """当前内核模块版本，例如 580.178.04。"""
+        try:
+            with open("/proc/driver/nvidia/version", "r") as f:
+                for tok in f.readline().split():
+                    if tok[:1].isdigit() and "." in tok:
+                        return tok
+        except Exception:
+            pass
+        return ""
+
+    def _gpu_envs(self):
+        """nvidia-smi 的运行环境候选。
+
+        驱动升级后内核模块和 /usr/lib 里的 libnvidia-ml 会短暂不一致
+        （driver/library version mismatch），所以家目录下可能放了一份对齐的库。
+        但那份库只有和当前内核模块版本一致时才有用：版本对不上时它会直接报错，
+        如果还把它排在前面、又只看 stdout 非空，就会把本来能用的干净环境带坏。
+        所以这里只挑版本号对得上的目录。
+        """
+        envs = [None]
+        home = os.path.expanduser("~")
+        ver = self._driver_version()
+        cands = [os.path.join(home, "nvml-" + ver)] if ver else []
+        for d in sorted(glob.glob(os.path.join(home, "nvml-*")), reverse=True):
+            if d not in cands:
+                cands.append(d)
+        for d in cands:
+            if os.path.isdir(d):
+                lp = d + ((":" + os.environ["LD_LIBRARY_PATH"]) if os.environ.get("LD_LIBRARY_PATH") else "")
+                envs.append(dict(os.environ, LD_LIBRARY_PATH=lp))
+        return envs
+
     def read_gpus(self):
         now = time.time()
         if now - self.gpu_cache[1] < 2.0 and self.gpu_cache[0]:
             return self._parse_gpu(self.gpu_cache[0])
         args = ["nvidia-smi", "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
                 "--format=csv,noheader"]
-        envs = [None]
-        # NVML 库与内核驱动版本不匹配时（driver/library version mismatch），
-        # 优先使用与内核模块版本匹配的 libnvidia-ml（x99: ~/nvml-580.173.02）
-        match_dir = os.path.expanduser("~/nvml-580.173.02")
-        if os.path.isdir(match_dir):
-            lp = match_dir + ((":" + os.environ["LD_LIBRARY_PATH"]) if os.environ.get("LD_LIBRARY_PATH") else "")
-            envs.insert(0, dict(os.environ, LD_LIBRARY_PATH=lp))
-        out = ""
-        for env in envs:
+        rows = []
+        for env in self._gpu_envs():
             try:
-                r = subprocess.run(args, capture_output=True, text=True, timeout=5, env=env)
-                out = (r.stdout or "").strip()
-                if out:
-                    break
+                r = subprocess.run(args, capture_output=True, text=True, timeout=8, env=env)
             except Exception:
-                out = ""
-        if not out:
-            out = self.gpu_cache[0] or ""
-        self.gpu_cache = (out, now)
-        return self._parse_gpu(out)
+                continue
+            # nvidia-smi 出错时会把 "Failed to initialize NVML: ..." 写到 stdout，
+            # 只看 stdout 非空会被这句错误信息骗过去（返回码其实是非 0），
+            # 于是既不重试、也解析不出任何显卡 —— GPU 就整块空了。
+            if r.returncode != 0:
+                continue
+            parsed = self._parse_gpu(r.stdout or "")
+            if parsed:
+                self.gpu_cache = ((r.stdout or "").strip(), now)
+                rows = parsed
+                break
+        return rows
 
     def _parse_gpu(self, s):
         res = []
