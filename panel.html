@@ -386,17 +386,31 @@ let typedSeq=-1, typedShown=0, typedRaf=0, typedStamp=0, traceBooted=false;
 function tailStreamBlock(){
   for(let i=traceBlocks.length-1;i>=0;i--){
     const k=traceBlocks[i].kind;
-    if(k==="out"||k==="think") return traceBlocks[i];
+    if(k==="out"||k==="think"||k==="tool") return traceBlocks[i];
     if(k==="in") return null;
   }
   return null;
 }
 
-/* 贴着底部时才自动跟随，用户往上翻历史时不被拽回来 */
-function keepTail(){
-  ["#liveTerm","#bigTerm"].forEach(sel=>{
+/* 自动滚动：默认钉在底部，只有用户自己往上翻时才停住跟随。
+   以前是「本来就贴底才跟随」，首屏历史一长就停在顶部、之后永远不跟。 */
+const termStick={"#liveTerm":true,"#bigTerm":true};
+
+function bindStick(){
+  Object.keys(termStick).forEach(sel=>{
     const el=$(sel);
-    if(el&&el.scrollTop+el.clientHeight>=el.scrollHeight-40) el.scrollTop=el.scrollHeight;
+    if(!el||el.dataset.stickBound) return;
+    el.dataset.stickBound="1";
+    el.addEventListener("scroll",()=>{
+      termStick[sel]=el.scrollTop+el.clientHeight>=el.scrollHeight-40;
+    });
+  });
+}
+
+function keepTail(){
+  Object.keys(termStick).forEach(sel=>{
+    const el=$(sel);
+    if(el&&termStick[sel]) el.scrollTop=el.scrollHeight;
   });
 }
 
@@ -452,7 +466,7 @@ function ingestTrace(evs){
     if(!e||typeof e!=="object") continue;
     const id=e.id==null?0:e.id;
     const last=traceBlocks[traceBlocks.length-1];
-    if((e.k==="out"||e.k==="think")&&last&&last.kind===e.k&&last.id===id){
+    if((e.k==="out"||e.k==="think"||e.k==="tool")&&last&&last.kind===e.k&&last.id===id){
       last.text+=(e.x||"");
       if(last.text.length>9000) last.text=last.text.slice(-9000);
       last.t=e.t||last.t;
@@ -484,6 +498,8 @@ function traceHtml(limit){
     }
     if(b.kind==="think") return '<div class="tl think"><span class="pfx">▹ 思考</span><span class="tw'+(b.seq===typedSeq&&typedShown<b.text.length?" live":"")+'" data-seq="'+b.seq+'">'+esc(typedText(b))+'</span></div>';
     if(b.kind==="out") return '<div class="tl out"><span class="pfx">▸ 输出</span><span class="tw'+(b.seq===typedSeq&&typedShown<b.text.length?" live":"")+'" data-seq="'+b.seq+'">'+esc(typedText(b))+'</span></div>';
+    /* 工具调用参数也是解码出来的内容，和正文一样进「输出」，以前这里整段是丢的 */
+    if(b.kind==="tool") return '<div class="tl tool"><span class="pfx">▸ 工具调用</span><span class="tw'+(b.seq===typedSeq&&typedShown<b.text.length?" live":"")+'" data-seq="'+b.seq+'">'+esc(typedText(b))+'</span></div>';
     if(b.kind==="end"){
       const e=b.e||{};
       let s='— 第 '+b.id+' 轮结束 · '+esc(b.t)+(e.why?(" · "+esc(e.why)):"");
@@ -501,9 +517,8 @@ function renderTermArea(){
   const paint=(sel,html)=>{
     const el=$(sel);
     if(!el) return;
-    const near=el.scrollTop+el.clientHeight>=el.scrollHeight-40;
     el.innerHTML=html;
-    if(near) el.scrollTop=el.scrollHeight;
+    keepTail();
   };
   paint("#liveTerm",brief);
   paint("#bigTerm",full);
@@ -703,10 +718,11 @@ document.querySelectorAll(".ttab").forEach(b=>{
 document.querySelectorAll(".modal-mask").forEach(m=>{
   m.addEventListener("click",e=>{if(e.target===m) m.classList.remove("open");});
 });
-$("#liveCard").onclick=()=>openModal("bigModal");
+$("#liveCard").onclick=()=>{openModal("bigModal");termStick["#bigTerm"]=true;keepTail();};
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){closeModal("settingsModal");closeModal("bigModal");}
 });
+bindStick();
 tick();
 setInterval(tick,1500);
 </script>

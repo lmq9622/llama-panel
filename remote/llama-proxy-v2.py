@@ -167,6 +167,62 @@ def _content_text(content):
         return str(content)
 
 
+def _reasoning_text(item):
+    """把 /v1/responses 的 reasoning item 压成可读文本。"""
+    parts = []
+    for key in ("summary", "content"):
+        v = item.get(key)
+        if isinstance(v, list):
+            for p in v:
+                if isinstance(p, dict) and p.get("text") is not None:
+                    parts.append(str(p["text"]))
+                elif isinstance(p, str):
+                    parts.append(p)
+        elif isinstance(v, str) and v:
+            parts.append(v)
+    return "".join(parts)
+
+
+def responses_input(data):
+    """把 /v1/responses 的 instructions + input 归一成 messages 列表，
+    这样 agent 客户端的每一轮也能在面板里看清到底喂了什么。"""
+    out = []
+    ins = data.get("instructions")
+    if isinstance(ins, str) and ins.strip():
+        out.append({"role": "system", "content": ins})
+    elif isinstance(ins, list) and ins:
+        out.append({"role": "system", "content": ins})
+    inp = data.get("input")
+    if isinstance(inp, str):
+        if inp:
+            out.append({"role": "user", "content": inp})
+        return out
+    if not isinstance(inp, list):
+        return out
+    for it in inp:
+        if not isinstance(it, dict):
+            out.append({"role": "?", "content": str(it)})
+            continue
+        t = it.get("type")
+        if t in (None, "message"):
+            out.append({"role": str(it.get("role") or "user"), "content": it.get("content")})
+        elif t == "function_call":
+            out.append({"role": "assistant",
+                        "content": "调用 %s(%s)" % (it.get("name"), it.get("arguments"))})
+        elif t == "function_call_output":
+            out.append({"role": "tool", "content": it.get("output")})
+        elif t in ("reasoning", "reasoning_text"):
+            out.append({"role": "reasoning", "content": _reasoning_text(it)})
+        elif t in ("input_text", "output_text", "text"):
+            out.append({"role": "user", "content": it.get("text")})
+        else:
+            try:
+                out.append({"role": str(t or "?"), "content": json.dumps(it, ensure_ascii=False)})
+            except Exception:
+                out.append({"role": str(t or "?"), "content": str(it)})
+    return out
+
+
 def trace_begin(path, body):
     """请求开头记一行 in，返回该请求的流式上下文。"""
     with _trace_lock:
@@ -182,6 +238,10 @@ def trace_begin(path, body):
         return ctx
     msgs, total, dropped = [], 0, 0
     raw = data.get("messages")
+    # /v1/responses（Codex / 各类 agent 客户端走的就是它）的输入在 instructions + input 里，
+    # 以前这里只认 messages，导致这些轮次显示「0 条消息 · 0 字符」，输入整段看不见。
+    if not (isinstance(raw, list) and raw):
+        raw = responses_input(data)
     if isinstance(raw, list) and raw:
         if len(raw) > TRACE_MSG_LIMIT:
             dropped = len(raw) - TRACE_MSG_LIMIT
@@ -237,6 +297,22 @@ def trace_delta(ctx, kind, text):
         trace_drain(ctx)
 
 
+def trace_tool_calls(ctx, calls):
+    """工具调用（function calling）的参数是模型解码出来的，算输出的一部分。"""
+    if not isinstance(calls, list):
+        return
+    for tc in calls:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict):
+            continue
+        if fn.get("name"):
+            trace_delta(ctx, "tool", "\n[调用 %s] " % fn["name"])
+        if fn.get("arguments"):
+            trace_delta(ctx, "tool", fn["arguments"])
+
+
 def trace_obj(ctx, obj):
     """从一条响应对象里抽取正文/思考增量，兼容流式与非流式。"""
     if not isinstance(obj, dict):
@@ -248,6 +324,15 @@ def trace_obj(ctx, obj):
             return
         if ty.endswith("reasoning_summary_text.delta") or ty.endswith("reasoning_text.delta"):
             trace_delta(ctx, "think", obj.get("delta"))
+            return
+        # 工具调用参数也是解码出来的内容，以前这一整块根本没记进对话流
+        if ty.endswith("function_call_arguments.delta"):
+            trace_delta(ctx, "tool", obj.get("delta"))
+            return
+        if ty.endswith("output_item.added"):
+            item = obj.get("item")
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                trace_delta(ctx, "tool", "\n[调用 %s] " % (item.get("name") or "?"))
             return
         if ty.endswith("completed") and isinstance(obj.get("response"), dict):
             u = obj["response"].get("usage")
@@ -269,11 +354,13 @@ def trace_obj(ctx, obj):
     if isinstance(delta, dict):
         trace_delta(ctx, "think", delta.get("reasoning_content"))
         trace_delta(ctx, "out", delta.get("content"))
+        trace_tool_calls(ctx, delta.get("tool_calls"))
         return
     msg = c0.get("message")
     if isinstance(msg, dict):
         trace_delta(ctx, "think", msg.get("reasoning_content"))
         trace_delta(ctx, "out", msg.get("content"))
+        trace_tool_calls(ctx, msg.get("tool_calls"))
         return
     if c0.get("text"):
         trace_delta(ctx, "out", c0["text"])
@@ -568,6 +655,35 @@ def _apply_reasoning_hint(data, effort):
     return True
 
 
+def ensure_stream_usage(method, path, body):
+    """流式请求强制带上 stream_options.include_usage。
+
+    不加这个，后端不会在收尾补一个 usage 分片，面板就拿不到这一轮的
+    输入 / 输出 token 数（对话流结尾那行一直是空的）。加了之后 usage 里的
+    completion_tokens 已经是「这一轮解码出来的全部 token」——思考、正文、
+    工具调用参数都算在里面，和 llama.cpp 日志里 eval time 的 token 数一致。
+    """
+    if method != "POST" or path not in ("/v1/chat/completions", "/v1/completions"):
+        return body
+    try:
+        data = json.loads(body)
+    except Exception:
+        return body
+    if not isinstance(data, dict) or not data.get("stream"):
+        return body
+    so = data.get("stream_options")
+    if not isinstance(so, dict):
+        so = {}
+    if so.get("include_usage") is True:
+        return body
+    so["include_usage"] = True
+    data["stream_options"] = so
+    try:
+        return json.dumps(data, ensure_ascii=False).encode()
+    except Exception:
+        return body
+
+
 def normalize_reasoning(method, path, body, headers):
     """把 LobeChat/qwen 的思考参数翻译成 llama.cpp 认识的形式。
 
@@ -727,6 +843,7 @@ def handle_client(client_sock, addr):
         remote_sock.settimeout(None)
 
         body, headers = normalize_reasoning(method, path, body, headers)
+        body = ensure_stream_usage(method, path, body)
 
         # 对话流：记下这一轮到底喂了什么（normalize 之后 = 后端真实收到的内容）
         tctx = None
