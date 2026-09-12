@@ -2,7 +2,9 @@
 
 把一台 Linux 推理机（llama.cpp / 多卡 GPU）接到你的 Windows 桌面上：**双击安装包、填一次 SSH 地址和账号，安装向导自动把采集代理部署到远端并重启服务**，之后打开桌面图标就能实时看到 GPU、CPU、显存、吞吐、计费，以及**喂给模型什么、模型输出什么**的流式终端。
 
-安装与运行全程不弹黑色控制台窗口。
+![面板总览](docs/shot-dashboard.png)
+
+![AI 实况 · 流式终端](docs/shot-trace.png)
 
 ## 功能特性
 
@@ -104,17 +106,6 @@ pyinstaller deploy.spec
 | `port_internal` / `port_external` | 内部 / 对外端口，默认 `18081` / `8081` |
 | `alias` | 模型别名，默认 `qwen3.8-27b` |
 | `service` | systemd 服务名，默认 `llama-servers` |
-
-## 这些坑都已经在代码里堵住了
-
-| 曾经的毛病 | 现在的处理 |
-| --- | --- |
-| 启动面板会闪出三四个黑色控制台窗口 | `server.py` 用 `CREATE_NO_WINDOW` + `STARTUPINFO` 包装所有子进程，全程无黑框 |
-| 16 核 32 线程的机器被显示成 32 核 | 远端 `feeder.py` 读 `/proc/cpuinfo`，按 `(physical id, core id)` 去重统计物理核，线程数另算 |
-| 安装向导卡在「正在部署」进度页 | 向导把 SSH 参数写成 JSON 临时文件交给 `deploy.exe`（不再拼命令行），并按 `结果: OK` 前缀判定成功 |
-| 静默安装（`/VERYSILENT`）永久卡住 | 所有消息框改用 `SuppressibleMsgBox`，`/SUPPRESSMSGBOXES` 下自动跳过 |
-| 远端有多个 `*.gguf` / `mmproj` 时被随便挑一个 | 只在候选唯一时才自动填写，多候选写成 `*_ambiguous` 并跳过，绝不猜 |
-| 部署会覆盖手工调过的 systemd unit | 远端 unit 已存在时保持原样，只重启不重写 |
 
 ## 目录结构
 
