@@ -5,6 +5,9 @@
 
 import os
 
+# 与面板同一个 llama 图标，便于在任务管理器里一眼认出
+ICON = os.path.join(SPECPATH, 'assets', 'llama.ico')
+
 a = Analysis(
     ['deploy.py'],
     pathex=[],
@@ -27,6 +30,7 @@ exe = EXE(
     a.datas,
     [],
     name='deploy',
+    icon=ICON,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

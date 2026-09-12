@@ -5,14 +5,14 @@
 ;   1. 解压面板主程序到用户目录（不需要管理员权限，不弹 UAC）
 ;   2. 自定义页收集 SSH 地址 / 端口 / 用户名 / 密码
 ;   3. 自动调用 deploy.exe 完成远端部署，每一步实时显示在进度页
-;   4. 生成开始菜单与桌面快捷方式
+;   4. 生成开始菜单与桌面快捷方式（桌面图标默认就装，不再作为可选项）
 ;
 ; 所有子进程都以隐藏方式启动，安装与运行过程中不会出现黑色控制台窗口。
 ; Pascal 脚本里的标识符只能用 ASCII，所以变量名统一用英文。
 
 #define MyAppName "本地大模型监控面板"
 #define MyAppShort "llama-panel"
-#define MyVersion "1.0.0"
+#define MyVersion "1.0.1"
 #define MyPublisher "lmq9622"
 
 [Setup]
@@ -31,6 +31,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
 OutputBaseFilename=llama-panel-setup-{#MyVersion}
+; 安装程序自己用 llama 图标，任务栏与文件属性里都能认出来
+SetupIconFile=..\assets\llama.ico
 Compression=lzma2/max
 SolidCompression=yes
 UninstallDisplayIcon={app}\llama-monitor-panel.exe
@@ -40,17 +42,15 @@ AllowNoIcons=yes
 [Languages]
 Name: "chinese"; MessagesFile: "ChineseSimplified.isl"
 
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-
 [Files]
 Source: "..\dist\llama-monitor-panel.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\deploy.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\llama-monitor-panel.exe"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\llama-monitor-panel.exe"; IconFilename: "{app}\llama-monitor-panel.exe"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\llama-monitor-panel.exe"; Tasks: desktopicon
+; 注意：这里不带 Tasks 限定，桌面快捷方式一定创建（以前的 desktopicon 任务在静默安装下不会被勾选）
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\llama-monitor-panel.exe"; IconFilename: "{app}\llama-monitor-panel.exe"
 
 [Run]
 Filename: "{app}\llama-monitor-panel.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

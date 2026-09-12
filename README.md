@@ -39,7 +39,7 @@ Windows 桌面                                 Linux 推理机
 
 ## 安装（Windows 一键）
 
-1. 到 [Releases](https://github.com/lmq9622/llama-panel/releases/latest) 下载 `llama-panel-setup-1.0.0.exe`（约 53 MB）；
+1. 到 [Releases](https://github.com/lmq9622/llama-panel/releases/latest) 下载 `llama-panel-setup-1.0.1.exe`（约 53 MB）；
 2. 双击运行，向导里填：
 
 | 字段 | 说明 |
@@ -124,3 +124,4 @@ pyinstaller deploy.spec
 - 目前只在 Windows 10 / 11 x64 上验证过；
 - 安装包未做代码签名，首次运行可能弹 SmartScreen「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可；
 - 面板默认只监听本机，SSH 凭据保存在本机 `panel-data/settings.json`，不会上传到任何地方。
+- 图标取自 [llama.cpp](https://github.com/ggml-org/llama.cpp) 官方 `media/llama1-icon-transparent.png`（MIT），`assets/llama.ico` 由它生成。

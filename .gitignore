@@ -12,3 +12,6 @@ panel-data/
 
 # 安装向导回归测试临时文件
 installer/_test*
+
+# 旧脚本/旧文件的本地备份，不进仓库
+.backup/
