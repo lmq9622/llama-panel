@@ -415,13 +415,33 @@ def trace_sse_chunk(ctx, payload):
             continue
 
 
+def _pick_int(d, *names):
+    """按顺序取第一个是整数的字段，两套 usage 字段名都能吃。"""
+    for n in names:
+        v = d.get(n)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+    return None
+
+
 def trace_finish(ctx):
     trace_drain(ctx)
     kw = {"id": ctx["id"], "why": ctx.get("why") or ""}
     u = ctx.get("usage")
     if isinstance(u, dict):
-        kw["in_tok"] = u.get("prompt_tokens")
-        kw["out_tok"] = u.get("completion_tokens")
+        # 两套字段名都要认：
+        #   /v1/chat/completions -> prompt_tokens / completion_tokens
+        #   /v1/responses        -> input_tokens  / output_tokens
+        # 只认前一套的话，agent 客户端（走 /v1/responses）的每一轮都取不到数，
+        # 面板上就永远没有「输入 X / 输出 Y tokens」。
+        # 注意 output/completion 都是「本轮解码出来的全部 token」，
+        # 思考、正文、工具调用参数都算在里面。
+        kw["in_tok"] = _pick_int(u, "prompt_tokens", "input_tokens")
+        kw["out_tok"] = _pick_int(u, "completion_tokens", "output_tokens")
     trace_emit("end", **kw)
 
 
