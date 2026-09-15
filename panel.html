@@ -269,7 +269,7 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
   </div>
 </section>
 </div>
-<footer class="foot" id="foot">数据源：x99 (192.168.2.6) · llama.cpp /slots + 日志流 · 刷新 1.5s</footer>
+<footer class="foot" id="foot">数据源：x99 (192.168.2.6) · llama.cpp /slots + 日志流 · 刷新 0.5s</footer>
 </div>
 <div class="modal-mask" id="settingsModal">
   <div class="glass modal">
@@ -355,7 +355,7 @@ function render(d){
   renderParams(pickSlot(fr));
   renderHw(fr);
   renderHist(fr);
-  $("#foot").textContent="数据源： "+((d.feed&&d.feed.host)||"--")+" · llama.cpp /slots + 日志流 · 更新 "+((fr&&fr.ts)||"--")+" · 刷新 1.5s";
+  $("#foot").textContent="数据源： "+((d.feed&&d.feed.host)||"--")+" · llama.cpp /slots + 日志流 · 更新 "+((fr&&fr.ts)||"--")+" · 刷新 0.5s";
 }
 
 function renderLive(slot,fr){
@@ -387,7 +387,7 @@ let termTab="chat", traceSince=null, traceBlocks=[], traceLog=[];
 /* 主面板（没放大）的实况框高度固定，只渲染最近若干段，早的自动折叠掉；
    放大页 #bigTerm 也只保留最近 FULL_BLOCKS 段，防止长对话把 DOM 越撑越大。 */
 const INLINE_BLOCKS=14, INLINE_LOG_LINES=120, FULL_BLOCKS=300;
-/* 对话流会一直累积，终端 HTML 越来越长；每 1.5s 轮询都全量重建 innerHTML，
+/* 对话流会一直累积，终端 HTML 越来越长；每 0.5s 轮询都全量重建 innerHTML，
    用久了页面必卡。改成内容真变了才重建；打字机动画直接改 textContent，不受影响。 */
 let termDirty=true, lastLogFp="";
 
@@ -536,7 +536,7 @@ function renderTermArea(){
     keepTail();
   };
   paint("#liveTerm",brief);
-  /* 放大弹窗没开着就别渲染：那里会铺满最近 300 段历史，长对话下每 1.5s 都全量重建一次，
+  /* 放大弹窗没开着就别渲染：那里会铺满最近 300 段历史，长对话下每 0.5s 都全量重建一次，
      页面越用越卡。弹窗打开时（liveCard 点击 / 切 tab）会立刻补渲染。 */
   const big=$("#bigModal");
   if(big&&big.classList.contains("open")){
@@ -749,7 +749,7 @@ document.addEventListener("keydown",e=>{
 });
 bindStick();
 tick();
-setInterval(tick,1500);
+setInterval(tick,500);
 </script>
 </body>
 </html>
