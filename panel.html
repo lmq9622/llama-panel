@@ -280,7 +280,7 @@ input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
       <div class="fg"><label>输出单价 <span class="en">元 / 百万 tokens</span></label><input id="sOut" type="number" step="0.01" min="0"></div>
       <div class="fg"><label>数据源 <span class="en">ssh host</span></label><input id="sHost" type="text"></div>
       <div class="fg"><label>SSH 端口 <span class="en">默认 22</span></label><input id="sPort" type="number" min="1" max="65535" placeholder="22"></div>
-      <div class="fg"><label>Feeder 脚本路径 <span class="en">x99 上</span></label><input id="sRemote" type="text"></div>
+      <div class="fg"><label>Feeder 脚本路径 <span class="en">服务器 上</span></label><input id="sRemote" type="text"></div>
       <div class="modal-actions">
         <button class="btn danger" id="btnReset">重置统计</button>
         <span class="spacer"></span>
@@ -385,8 +385,11 @@ function renderLive(slot,fr){
 
 let termTab="chat", traceSince=null, traceBlocks=[], traceLog=[];
 /* 主面板（没放大）的实况框高度固定，只渲染最近若干段，早的自动折叠掉；
-   放大页 #bigTerm 仍然渲染完整历史。 */
-const INLINE_BLOCKS=14, INLINE_LOG_LINES=120;
+   放大页 #bigTerm 也只保留最近 FULL_BLOCKS 段，防止长对话把 DOM 越撑越大。 */
+const INLINE_BLOCKS=14, INLINE_LOG_LINES=120, FULL_BLOCKS=300;
+/* 对话流会一直累积，终端 HTML 越来越长；每 1.5s 轮询都全量重建 innerHTML，
+   用久了页面必卡。改成内容真变了才重建；打字机动画直接改 textContent，不受影响。 */
+let termDirty=true, lastLogFp="";
 
 /* 打字机动画：模型是一段一段吐出来的，整段替换会「一串一串蹦」，
    所以只让正在流式输出的最后一段逐字推进，历史内容立即全显。 */
@@ -472,6 +475,7 @@ function paramLine(p){
    面板读起来才像流式终端，而不是一行一个 token。 */
 function ingestTrace(evs){
   let blockSeq=traceBlocks.length?traceBlocks[traceBlocks.length-1].seq:0;
+  let changed=false;
   for(const e of (evs||[])){
     if(!e||typeof e!=="object") continue;
     const id=e.id==null?0:e.id;
@@ -479,12 +483,13 @@ function ingestTrace(evs){
     if((e.k==="out"||e.k==="think"||e.k==="tool")&&last&&last.kind===e.k&&last.id===id){
       last.text+=(e.x||"");
       if(last.text.length>9000) last.text=last.text.slice(-9000);
-      last.t=e.t||last.t;
+      last.t=e.t||last.t;changed=true;
     }else{
-      traceBlocks.push({seq:++blockSeq,kind:e.k||"",id:id,t:e.t||"",text:e.x||"",e:e});
+      traceBlocks.push({seq:++blockSeq,kind:e.k||"",id:id,t:e.t||"",text:e.x||"",e:e});changed=true;
     }
   }
-  if(traceBlocks.length>500) traceBlocks=traceBlocks.slice(-500);
+  if(traceBlocks.length>500){traceBlocks=traceBlocks.slice(-500);changed=true;}
+  if(changed) termDirty=true;
 }
 
 function traceHtml(limit){
@@ -521,7 +526,7 @@ function traceHtml(limit){
 }
 
 function renderTermArea(){
-  const full=termTab==="chat"?traceHtml():termHtml(traceLog);
+  termDirty=false;
   const brief=termTab==="chat"?traceHtml(INLINE_BLOCKS):termHtml(traceLog.slice(-INLINE_LOG_LINES));
   /* 只在用户本来就贴着底部时才自动跟到底，翻看历史时不会被拽走 */
   const paint=(sel,html)=>{
@@ -531,12 +536,22 @@ function renderTermArea(){
     keepTail();
   };
   paint("#liveTerm",brief);
-  paint("#bigTerm",full);
+  /* 放大弹窗没开着就别渲染：那里会铺满最近 300 段历史，长对话下每 1.5s 都全量重建一次，
+     页面越用越卡。弹窗打开时（liveCard 点击 / 切 tab）会立刻补渲染。 */
+  const big=$("#bigModal");
+  if(big&&big.classList.contains("open")){
+    paint("#bigTerm",termTab==="chat"?traceHtml(FULL_BLOCKS):termHtml(traceLog));
+  }
   document.querySelectorAll(".ttab").forEach(b=>b.classList.toggle("on",b.dataset.tab===termTab));
 }
 
 function renderTerm(lines){
-  traceLog=lines||[];
+  /* 引擎日志没新行就不动；对话流也没有新事件时，跳过整页 DOM 重建 */
+  const fp=lines.length+":"+((lines&&lines[lines.length-1])||"");
+  const logChanged=fp!==lastLogFp;
+  lastLogFp=fp;
+  if(logChanged){traceLog=lines||[];termDirty=true;}
+  if(!termDirty) return;
   renderTermArea();
 }
 
@@ -682,7 +697,7 @@ async function tick(){
     if(!d||!d.ok){setFeed("offline");return;}
     if(d.trace_seq!=null){
       // 后端重启后序号会归零，此时丢掉本地缓冲重新累积
-      if(traceSince!=null&&d.trace_seq<traceSince) traceBlocks=[];
+      if(traceSince!=null&&d.trace_seq<traceSince){traceBlocks=[];termDirty=true;}
       traceSince=d.trace_seq;
     }
     const boot=!traceBooted;
@@ -728,7 +743,7 @@ document.querySelectorAll(".ttab").forEach(b=>{
 document.querySelectorAll(".modal-mask").forEach(m=>{
   m.addEventListener("click",e=>{if(e.target===m) m.classList.remove("open");});
 });
-$("#liveCard").onclick=()=>{openModal("bigModal");termStick["#bigTerm"]=true;keepTail();};
+$("#liveCard").onclick=()=>{openModal("bigModal");termDirty=true;renderTermArea();termStick["#bigTerm"]=true;keepTail();};
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){closeModal("settingsModal");closeModal("bigModal");}
 });
